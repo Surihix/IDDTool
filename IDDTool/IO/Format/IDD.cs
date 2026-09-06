@@ -18,7 +18,8 @@ namespace IDDTool.IO.Format
     public enum Console
     {
         Playstation3,
-        Xbox360
+        Xbox360,
+        PC
     }
 
     public class IDDTexture
@@ -94,12 +95,13 @@ namespace IDDTool.IO.Format
         ///     Loads the textures of a Bayonetta *.idd file into a object.
         /// </summary>
         /// <param name="Input">The input Stream with the IDD data</param>
+        /// <param name="UsePCcompat">A boolean to force parse the IDD for win32 PC version</param>
         /// <returns>The textures and mappings</returns>
-        public static IDDContent Load(Stream Input)
+        public static IDDContent Load(Stream Input, bool UsePCcompat)
         {
             IDDContent Output = new IDDContent();
 
-            EndianBinaryReader Reader = new EndianBinaryReader(Input, Endian.Big);
+            EndianBinaryReader Reader = new EndianBinaryReader(Input, UsePCcompat == true ? Endian.Little : Endian.Big);
 
             string Signature = StringUtilities.ReadASCIIString(Input); //IDD
             uint UsedSectionsCount = Reader.ReadUInt32();
@@ -141,79 +143,114 @@ namespace IDDTool.IO.Format
                 Input.Seek(BaseTextureOffset + AddressTableOffset + i * 4, SeekOrigin.Begin);
                 Input.Seek(BaseTextureOffset + Reader.ReadUInt32(), SeekOrigin.Begin);
 
-                if (Reader.ReadUInt32() == 3)
+                if (UsePCcompat)
                 {
-                    //Xbox 360
-                    uint Count = Reader.ReadUInt32();
-                    Input.Seek(0xc, SeekOrigin.Current); //0x0
-                    Reader.ReadUInt32(); //0xFFFF0000
-                    Reader.ReadUInt32(); //0xFFFF0000
-                    Reader.ReadUInt32(); //0x81000002
-                    uint TextureFormat = Reader.ReadUInt32();
-                    uint TextureDescriptor = Reader.ReadUInt32();
-                    Reader.ReadUInt32(); //0xD10
-                    uint Mipmaps = ((Reader.ReadUInt32() >> 6) & 7) + 1;
-                    uint OriginalLength = Reader.ReadUInt32();
+                    Texture.Platform = Console.PC;
 
-                    int Width = (int)(TextureDescriptor & 0x1fff) + 1;
-                    int Height = (int)((TextureDescriptor >> 13) & 0x1fff) + 1;
+                    Input.Seek(BaseTextureOffset + LengthTableOffset + i * 4, SeekOrigin.Begin);
+                    int totalDataSize = Reader.ReadInt32();
 
-                    switch (TextureFormat)
-                    {
-                        case 0x52: Texture.Format = Format.TextureFormat.DXT1; break;
-                        case 0x53: Texture.Format = Format.TextureFormat.DXT3; break;
-                        case 0x54: Texture.Format = Format.TextureFormat.DXT5; break;
-                        default: throw new Exception(string.Format("Unsupported IDD X360 texture format 0x{0:X2}!", TextureFormat));
-                    }
-                    Texture.Platform = Console.Xbox360;
+                    Input.Seek(BaseTextureOffset + AddressTableOffset + i * 4, SeekOrigin.Begin);
+                    Input.Seek(BaseTextureOffset + Reader.ReadUInt32(), SeekOrigin.Begin);
+                    long dataOffset = (int)Input.Position;
+
+                    Input.Seek(dataOffset + 0x0C, SeekOrigin.Begin);
+
+                    int Height = Reader.ReadInt32();
+                    int Width = Reader.ReadInt32();
                     Texture.Resolution = new Size(Width, Height);
-                    Texture.TextureOffset = (uint)Input.Position;
 
-                    int Length = Width * Height;
-                    if (Texture.Format == Format.TextureFormat.DXT1) Length /= 2;
-                    byte[] Data = new byte[Length];
-                    Reader.Read(Data, 0, Data.Length);
-                    Data = XEndian16(Data);
-                    Data = XTextureScramble(Data, Texture, false);
-                    Texture.TextureData = Data;
+                    Input.Seek(dataOffset + 0x54, SeekOrigin.Begin);
+                    int formatVal = Reader.ReadInt32();
+
+                    switch (formatVal)
+                    {
+                        case 827611204: Texture.Format = Format.TextureFormat.DXT1; break;
+                        case 861165636: Texture.Format = Format.TextureFormat.DXT3; break;
+                        case 894720068: Texture.Format = Format.TextureFormat.DXT5; break;
+                    }
+
+                    Input.Seek(dataOffset + 0x80, SeekOrigin.Begin);
+                    Texture.TextureOffset = (uint)Input.Position;
+                    Texture.TextureData = new byte[totalDataSize];
+                    Reader.Read(Texture.TextureData, 0, totalDataSize);
                 }
                 else
                 {
-                    //Playstation 3
-                    uint Length = Reader.ReadUInt32();
-                    uint TextureCount = Reader.ReadUInt32();
-                    uint Id = Reader.ReadUInt32();
-                    uint TextureDataOffset = Reader.ReadUInt32();
-                    uint TextureDataLength = Reader.ReadUInt32();
-                    byte TextureFormat = Reader.ReadByte();
-                    byte Mipmaps = Reader.ReadByte();
-                    byte Dimension = Reader.ReadByte();
-                    byte Cubemaps = Reader.ReadByte();
-                    uint Remap = Reader.ReadUInt32();
-                    ushort Width = Reader.ReadUInt16();
-                    ushort Height = Reader.ReadUInt16();
-                    ushort Depth = Reader.ReadUInt16();
-                    ushort Pitch = Reader.ReadUInt16();
-                    ushort Location = Reader.ReadUInt16();
-                    uint TextureOffset = Reader.ReadUInt16();
-                    Reader.Seek(8, SeekOrigin.Current);
-
-                    bool IsSwizzle = (TextureFormat & 0x20) == 0;
-                    bool IsNormalized = (TextureFormat & 0x40) == 0;
-                    TextureFormat = (byte)(TextureFormat & ~0x60);
-
-                    switch (TextureFormat)
+                    if (Reader.ReadUInt32() == 3)
                     {
-                        case 0x86: Texture.Format = Format.TextureFormat.DXT1; break;
-                        case 0x87: Texture.Format = Format.TextureFormat.DXT3; break;
-                        case 0x88: Texture.Format = Format.TextureFormat.DXT5; break;
-                        default: throw new Exception(string.Format("Unsupported IDD PS3 texture format 0x{0:X2}!", TextureFormat));
+                        //Xbox 360
+                        uint Count = Reader.ReadUInt32();
+                        Input.Seek(0xc, SeekOrigin.Current); //0x0
+                        Reader.ReadUInt32(); //0xFFFF0000
+                        Reader.ReadUInt32(); //0xFFFF0000
+                        Reader.ReadUInt32(); //0x81000002
+                        uint TextureFormat = Reader.ReadUInt32();
+                        uint TextureDescriptor = Reader.ReadUInt32();
+                        Reader.ReadUInt32(); //0xD10
+                        uint Mipmaps = ((Reader.ReadUInt32() >> 6) & 7) + 1;
+                        uint OriginalLength = Reader.ReadUInt32();
+
+                        int Width = (int)(TextureDescriptor & 0x1fff) + 1;
+                        int Height = (int)((TextureDescriptor >> 13) & 0x1fff) + 1;
+
+                        switch (TextureFormat)
+                        {
+                            case 0x52: Texture.Format = Format.TextureFormat.DXT1; break;
+                            case 0x53: Texture.Format = Format.TextureFormat.DXT3; break;
+                            case 0x54: Texture.Format = Format.TextureFormat.DXT5; break;
+                            default: throw new Exception(string.Format("Unsupported IDD X360 texture format 0x{0:X2}!", TextureFormat));
+                        }
+                        Texture.Platform = Console.Xbox360;
+                        Texture.Resolution = new Size(Width, Height);
+                        Texture.TextureOffset = (uint)Input.Position;
+
+                        int Length = Width * Height;
+                        if (Texture.Format == Format.TextureFormat.DXT1) Length /= 2;
+                        byte[] Data = new byte[Length];
+                        Reader.Read(Data, 0, Data.Length);
+                        Data = XEndian16(Data);
+                        Data = XTextureScramble(Data, Texture, false);
+                        Texture.TextureData = Data;
                     }
-                    Texture.Platform = Console.Playstation3;
-                    Texture.Resolution = new Size(Width, Height);
-                    Texture.TextureOffset = (uint)Input.Position;
-                    Texture.TextureData = new byte[Length];
-                    Reader.Read(Texture.TextureData, 0, (int)Length);
+                    else
+                    {
+                        //Playstation 3
+                        uint Length = Reader.ReadUInt32();
+                        uint TextureCount = Reader.ReadUInt32();
+                        uint Id = Reader.ReadUInt32();
+                        uint TextureDataOffset = Reader.ReadUInt32();
+                        uint TextureDataLength = Reader.ReadUInt32();
+                        byte TextureFormat = Reader.ReadByte();
+                        byte Mipmaps = Reader.ReadByte();
+                        byte Dimension = Reader.ReadByte();
+                        byte Cubemaps = Reader.ReadByte();
+                        uint Remap = Reader.ReadUInt32();
+                        ushort Width = Reader.ReadUInt16();
+                        ushort Height = Reader.ReadUInt16();
+                        ushort Depth = Reader.ReadUInt16();
+                        ushort Pitch = Reader.ReadUInt16();
+                        ushort Location = Reader.ReadUInt16();
+                        uint TextureOffset = Reader.ReadUInt16();
+                        Reader.Seek(8, SeekOrigin.Current);
+
+                        bool IsSwizzle = (TextureFormat & 0x20) == 0;
+                        bool IsNormalized = (TextureFormat & 0x40) == 0;
+                        TextureFormat = (byte)(TextureFormat & ~0x60);
+
+                        switch (TextureFormat)
+                        {
+                            case 0x86: Texture.Format = Format.TextureFormat.DXT1; break;
+                            case 0x87: Texture.Format = Format.TextureFormat.DXT3; break;
+                            case 0x88: Texture.Format = Format.TextureFormat.DXT5; break;
+                            default: throw new Exception(string.Format("Unsupported IDD PS3 texture format 0x{0:X2}!", TextureFormat));
+                        }
+                        Texture.Platform = Console.Playstation3;
+                        Texture.Resolution = new Size(Width, Height);
+                        Texture.TextureOffset = (uint)Input.Position;
+                        Texture.TextureData = new byte[Length];
+                        Reader.Read(Texture.TextureData, 0, (int)Length);
+                    }
                 }
 
                 //Texture Map stuff (needs optimization)

@@ -26,8 +26,10 @@ namespace IDDTool
 
                 if (OpenDlg.ShowDialog() == DialogResult.OK && File.Exists(OpenDlg.FileName))
                 {
+                    DialogResult UsePCcompat = MessageBox.Show("Parse the IDD with PC version compatibility?", "Compatibility", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
                     CurrentFilePath = OpenDlg.FileName;
-                    CurrentFile = IDD.Load(new FileStream(CurrentFilePath, FileMode.Open));
+                    CurrentFile = IDD.Load(new FileStream(CurrentFilePath, FileMode.Open), UsePCcompat == DialogResult.Yes ? true : false);
 
                     TextureImg.Image = null;
                     LstTextures.Items.Clear();
@@ -49,12 +51,17 @@ namespace IDDTool
         {
             if (CurrentFile != null)
             {
-                IDD.Save(new FileStream(CurrentFilePath, FileMode.Open), CurrentFile);
-                MessageBox.Show(
-                    "Changes saved successfully!",
-                    "Information",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
+                DialogResult SaveWarning = MessageBox.Show("PC version is not supported for saving. proceed with saving the file in Xbox360 or PS3 compatibility? ", "Compatibility", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+                if (SaveWarning == DialogResult.Yes)
+                {
+                    IDD.Save(new FileStream(CurrentFilePath, FileMode.Open), CurrentFile);
+                    MessageBox.Show(
+                        "Changes saved successfully!",
+                        "Information",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
             }
         }
 
